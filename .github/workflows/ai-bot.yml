@@ -1,0 +1,107 @@
+name: ВИШ AI
+
+# Второй бот (папка ai-bot/) собирается и выкладывается отдельно от ВИШбота:
+# правка только в ai-bot/ не перезапускает ВИШбота и записывалку
+# (deploy.yml её игнорирует), а правка ВИШбота не трогает ВИШ AI.
+on:
+  push:
+    branches: [main]
+    paths:
+      - ai-bot/**
+      - .github/workflows/ai-bot.yml
+  pull_request:
+    paths:
+      - ai-bot/**
+      - .github/workflows/ai-bot.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ai-bot
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ai-bot/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Package release
+        run: |
+          mkdir -p release
+          cp -r dist index.js package.json package-lock.json .env.example release/
+          printf 'omit=dev\naudit=false\nfund=false\n' > release/.npmrc
+          tar -C release -czf ../ai-bot.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-bot
+          path: ai-bot.tar.gz
+          retention-days: 7
+
+  # Нужны секреты PTERO_PANEL_URL и PTERO_API_KEY (общие с ВИШботом) и
+  # PTERO_AI_SERVER_ID — короткий id сервера ВИШ AI в панели. Нет id — шаг
+  # пропускается с предупреждением, сборка остаётся зелёной.
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      PANEL_URL: ${{ secrets.PTERO_PANEL_URL }}
+      SERVER_ID: ${{ secrets.PTERO_AI_SERVER_ID }}
+      API_KEY: ${{ secrets.PTERO_API_KEY }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ai-bot
+      - name: No server id
+        if: env.SERVER_ID == ''
+        run: echo "::warning::Нет секрета PTERO_AI_SERVER_ID — ВИШ AI собран, но не выложен"
+      - name: Upload to the panel and restart
+        if: env.SERVER_ID != ''
+        run: |
+          set -euo pipefail
+          PANEL_URL="${PANEL_URL%/}"
+          api() { curl -sS --fail-with-body -H "Authorization: Bearer $API_KEY" -H "Accept: application/json" "$@"; }
+          # Client API панели знает сервер по короткому id из адреса страницы
+          # (panel…/server/cf0acdc5 → cf0acdc5).
+          if ! [[ "$SERVER_ID" =~ ^[0-9a-f]{8}$ ]]; then
+            hint=""; [[ "$SERVER_ID" == */* ]] && hint=", в нём есть «/» — похоже, вставлен адрес целиком"
+            echo "::error::PTERO_AI_SERVER_ID должен быть коротким id сервера из адреса панели: 8 символов (цифры и a–f) после /server/. Сейчас в секрете ${#SERVER_ID} символ(ов)$hint."
+            exit 1
+          fi
+          if ! [[ "$API_KEY" == ptlc_* ]]; then
+            echo "::error::PTERO_API_KEY должен быть клиентским ключом панели (начинается с ptlc_): Account → API Credentials. Ключ администратора (ptla_) Client API не принимает."
+            exit 1
+          fi
+          status=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $API_KEY" -H "Accept: application/json" "$PANEL_URL/api/client/servers/$SERVER_ID" || true)
+          if [ "$status" = "401" ] || [ "$status" = "403" ]; then
+            echo "::error::Панель отклонила PTERO_API_KEY ($status): ключ удалён, опечатка или доступ ограничен по IP (в настройках ключа поле Allowed IPs должно быть пустым — у GitHub Actions IP каждый раз другой)."
+            exit 1
+          elif [ "$status" = "404" ]; then
+            visible=$(api "$PANEL_URL/api/client?per_page=100" | python3 -c 'import json,sys; ids=[s["attributes"]["identifier"] for s in json.load(sys.stdin)["data"]]; print(str(len(ids)) + " шт. (" + ", ".join(i[:2] + "…" for i in ids) + ")" if ids else "ни одного")' 2>/dev/null || echo "список не получен")
+            echo "::error::Сервера из PTERO_AI_SERVER_ID нет среди серверов ключа PTERO_API_KEY (404). Ключу видны: $visible. Нет нужного — ключ от другого аккаунта панели."
+            exit 1
+          elif [ "$status" != "200" ]; then
+            echo "::error::Панель ответила $status: проверь PTERO_PANEL_URL (вида https://panel.frienworld.space, без / в конце) и PTERO_API_KEY."
+            exit 1
+          fi
+          upload_url=$(api "$PANEL_URL/api/client/servers/$SERVER_ID/files/upload" | python3 -c 'import json,sys; print(json.load(sys.stdin)["attributes"]["url"])')
+          curl -sS --fail-with-body -F "files=@ai-bot.tar.gz" "$upload_url&directory=%2F"
+          api -X POST -H "Content-Type: application/json" "$PANEL_URL/api/client/servers/$SERVER_ID/files/decompress" -d '{"root":"/","file":"ai-bot.tar.gz"}'
+          api -X POST -H "Content-Type: application/json" "$PANEL_URL/api/client/servers/$SERVER_ID/files/delete" -d '{"root":"/","files":["ai-bot.tar.gz"]}'
+          api -X POST -H "Content-Type: application/json" "$PANEL_URL/api/client/servers/$SERVER_ID/power" -d '{"signal":"restart"}'
+          echo "restart signal sent"

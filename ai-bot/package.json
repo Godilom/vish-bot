@@ -1,0 +1,28 @@
+{
+  "name": "vish-ai-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ВИШ AI — тонкий чат-бот в Telegram поверх Claude API (Haiku 5.5, effort low)",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/main.ts",
+    "start": "node index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.125.0",
+    "grammy": "^1.46.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

@@ -319,3 +319,29 @@ Workflow `.github/workflows/deploy.yml`: на каждый push в `main` про
 ## Бэкап
 
 База — один файл `data/vish-bot.sqlite` (WAL-режим, рядом могут лежать `-wal` и `-shm`). Бэкап панели («Backups», 1 слот) его покрывает; для ручной копии остановите бот или скопируйте все три файла вместе.
+
+## ВИШ AI (второй бот, папка `ai-bot/`)
+
+Отдельный сервер в той же панели, деплой — `.github/workflows/ai-bot.yml`. Он запускается только когда меняется `ai-bot/`;
+`deploy.yml` эту папку игнорирует, поэтому мёрж одного бота не перезапускает другой (и не трогает записывалку).
+
+1. В панели создать сервер, egg **Node.js generic**, стартовый файл `index.js` (`JS_FILE=index.js`), Docker-образ — как у ВИШбота.
+   Порт боту не нужен: он работает через long polling.
+2. Скопировать короткий id сервера из адреса страницы: `panel.frienworld.space/server/1a2b3c4d` → `1a2b3c4d`.
+3. GitHub → Settings → Secrets and variables → Actions → New repository secret:
+
+| Секрет | Значение |
+|---|---|
+| `PTERO_AI_SERVER_ID` | новый, 8 символов из шага 2 |
+| `PTERO_PANEL_URL` | общий с ВИШботом: `https://panel.frienworld.space` (без `/` в конце) |
+| `PTERO_API_KEY` | общий с ВИШботом: клиентский ключ `ptlc_…` (Account → API Credentials) того аккаунта, которому видны оба сервера; поле Allowed IPs пустое |
+
+4. В файловом менеджере нового сервера — файл `/home/container/.env` (пример — `ai-bot/.env.example`):
+
+```
+AI_BOT_TOKEN=…        # токен бота ВИШ AI от @BotFather
+ANTHROPIC_API_KEY=…   # ключ Anthropic API
+AI_ADMIN_IDS=…        # свой id Telegram: без лимита и с /usage
+```
+
+Без `PTERO_AI_SERVER_ID` workflow собирает и тестирует бота, но выкладку пропускает с предупреждением.
