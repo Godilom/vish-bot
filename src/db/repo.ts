@@ -7,12 +7,21 @@ import { contentHash, positionKey } from "../schedule/model.js";
 import type { LocalDate } from "../time.js";
 
 import type { TeacherView } from "../schedule/format.js";
+import { MAX_UID_BASE } from "../max/store.js";
 
 export type ScheduleFormat = "text" | "image" | "both";
 export type { TeacherView };
 
-/** 1 — человек пришёл из МАКС (у него uid моста, см. max_users), 0 — из Telegram. */
-const IS_MAX = "(CASE WHEN id IN (SELECT uid FROM max_users) THEN 1 ELSE 0 END)";
+/** Откуда человек: Telegram или МАКС (мост, src/max/). */
+export type Platform = "tg" | "max";
+
+/**
+ * 1 — человек пришёл из МАКС, 0 — из Telegram. Определяется точно, без
+ * догадок: у людей из МАКС id — uid моста (от 2^52, пара в max_users), у
+ * людей Telegram — их id Telegram, он всегда меньше 2^52.
+ */
+const isMaxSql = (col: string): string => `(CASE WHEN ${col} > ${MAX_UID_BASE} OR ${col} IN (SELECT uid FROM max_users) THEN 1 ELSE 0 END)`;
+const IS_MAX = isMaxSql("id");
 
 export interface NewsSource {
   id: number;
@@ -713,16 +722,18 @@ export class Repo {
    * Пользователи отдельно Telegram и МАКС: один человек в обоих — две записи,
    * которые не связать, поэтому вместе их не складываем.
    */
-  countUsersByPlatform(): Record<"tg" | "max", { total: number; active: number; withGroup: number }> {
+  countUsersByPlatform(): Record<Platform, { total: number; active: number; withGroup: number; customMenu: number }> {
     const rows = this.db
       .prepare(
         `SELECT ${IS_MAX} AS isMax, COUNT(*) AS total, SUM(CASE WHEN blocked = 0 THEN 1 ELSE 0 END) AS active,
-                SUM(CASE WHEN group_key IS NOT NULL AND blocked = 0 THEN 1 ELSE 0 END) AS withGroup
+                SUM(CASE WHEN group_key IS NOT NULL AND blocked = 0 THEN 1 ELSE 0 END) AS withGroup,
+                SUM(CASE WHEN menu_buttons IS NOT NULL AND blocked = 0 THEN 1 ELSE 0 END) AS customMenu
          FROM users GROUP BY isMax`,
       )
-      .all() as Array<{ isMax: number; total: number; active: number | null; withGroup: number | null }>;
-    const out = { tg: { total: 0, active: 0, withGroup: 0 }, max: { total: 0, active: 0, withGroup: 0 } };
-    for (const r of rows) out[r.isMax ? "max" : "tg"] = { total: r.total, active: r.active ?? 0, withGroup: r.withGroup ?? 0 };
+      .all() as Array<{ isMax: number; total: number; active: number | null; withGroup: number | null; customMenu: number | null }>;
+    const zero = { total: 0, active: 0, withGroup: 0, customMenu: 0 };
+    const out: Record<Platform, typeof zero> = { tg: { ...zero }, max: { ...zero } };
+    for (const r of rows) out[r.isMax ? "max" : "tg"] = { total: r.total, active: r.active ?? 0, withGroup: r.withGroup ?? 0, customMenu: r.customMenu ?? 0 };
     return out;
   }
 
@@ -1705,13 +1716,30 @@ export class Repo {
   }
 
   // ---- счётчики нажатий (без id людей) ----
-  bumpCounter(day: LocalDate, key: string): void {
-    this.db.prepare("INSERT INTO ui_counters (day, key, n) VALUES (?, ?, 1) ON CONFLICT(day, key) DO UPDATE SET n = n + 1").run(day, key.slice(0, 64));
+  // n — всего, n_tg / n_max — по платформам. Нажатия, записанные до разделения
+  // (n больше n_tg + n_max), не разобрать: id людей в счётчиках нет.
+  bumpCounter(day: LocalDate, key: string, platform: Platform = "tg"): void {
+    const [tg, max] = platform === "max" ? [0, 1] : [1, 0];
+    this.db
+      .prepare(
+        `INSERT INTO ui_counters (day, key, n, n_tg, n_max) VALUES (?, ?, 1, ?, ?)
+         ON CONFLICT(day, key) DO UPDATE SET n = n + 1, n_tg = n_tg + excluded.n_tg, n_max = n_max + excluded.n_max`,
+      )
+      .run(day, key.slice(0, 64), tg, max);
   }
 
-  /** Сумма нажатий с этой даты включительно, самые частые первыми. */
-  countersSince(day: LocalDate): Array<{ key: string; n: number }> {
-    return this.db.prepare("SELECT key, SUM(n) AS n FROM ui_counters WHERE day >= ? GROUP BY key ORDER BY n DESC, key").all(day) as Array<{ key: string; n: number }>;
+  /** Сумма нажатий с этой даты включительно, самые частые первыми: всего или одной платформы. */
+  countersSince(day: LocalDate, platform?: Platform): Array<{ key: string; n: number }> {
+    const col = platform === "tg" ? "n_tg" : platform === "max" ? "n_max" : "n";
+    return this.db
+      .prepare(`SELECT key, SUM(${col}) AS n FROM ui_counters WHERE day >= ? GROUP BY key HAVING SUM(${col}) > 0 ORDER BY n DESC, key`)
+      .all(day) as Array<{ key: string; n: number }>;
+  }
+
+  /** Нажатия с этой даты, записанные до разделения по платформам: чьи они, уже не узнать. */
+  unsplitCountersSince(day: LocalDate): number {
+    const r = this.db.prepare("SELECT SUM(n - n_tg - n_max) AS n FROM ui_counters WHERE day >= ?").get(day) as { n: number | null };
+    return r.n ?? 0;
   }
 
   // ---- кто забирает ленты календаря (без id в выдаче) ----
@@ -1727,18 +1755,20 @@ export class Repo {
    * забирали и сколько забирают с since — всего и по клиентам. Личные ленты
    * («u:») и ссылки групп («f:») — отдельно.
    */
-  calFetchStats(since: string): { issued: number; feeds: number; byKind: Record<"u" | "f", { ever: number; live: number; clients: Record<string, number> }> } {
+  calFetchStats(since: string, platform?: Platform): { issued: number; feeds: number; byKind: Record<"u" | "f", { ever: number; live: number; clients: Record<string, number> }> } {
     const one = (sql: string, ...args: unknown[]): number => Number((this.db.prepare(sql).get(...args) as { n: number }).n);
     const byKind = { u: { ever: 0, live: 0, clients: {} as Record<string, number> }, f: { ever: 0, live: 0, clients: {} as Record<string, number> } };
     for (const kind of ["u", "f"] as const) {
       const like = `${kind}:%`;
-      byKind[kind].ever = one("SELECT COUNT(DISTINCT owner) AS n FROM cal_fetches WHERE owner LIKE ?", like);
-      byKind[kind].live = one("SELECT COUNT(DISTINCT owner) AS n FROM cal_fetches WHERE owner LIKE ? AND last_at >= ?", like, since);
-      const rows = this.db.prepare("SELECT client, COUNT(*) AS n FROM cal_fetches WHERE owner LIKE ? AND last_at >= ? GROUP BY client").all(like, since) as Array<{ client: string; n: number }>;
+      // Личная лента (u:<id>) — одного человека, по id видно платформу; ссылки групп от админа (f:) — ничьи.
+      const only = platform && kind === "u" ? ` AND ${isMaxSql("CAST(substr(owner, 3) AS INTEGER)")} = ${platform === "max" ? 1 : 0}` : "";
+      byKind[kind].ever = one(`SELECT COUNT(DISTINCT owner) AS n FROM cal_fetches WHERE owner LIKE ?${only}`, like);
+      byKind[kind].live = one(`SELECT COUNT(DISTINCT owner) AS n FROM cal_fetches WHERE owner LIKE ? AND last_at >= ?${only}`, like, since);
+      const rows = this.db.prepare(`SELECT client, COUNT(*) AS n FROM cal_fetches WHERE owner LIKE ? AND last_at >= ?${only} GROUP BY client`).all(like, since) as Array<{ client: string; n: number }>;
       for (const r of rows) byKind[kind].clients[r.client] = r.n;
     }
     return {
-      issued: one("SELECT COUNT(*) AS n FROM users WHERE cal_token IS NOT NULL"),
+      issued: one(`SELECT COUNT(*) AS n FROM users WHERE cal_token IS NOT NULL${platform ? ` AND ${IS_MAX} = ${platform === "max" ? 1 : 0}` : ""}`),
       feeds: one("SELECT COUNT(*) AS n FROM cal_feeds WHERE revoked_at IS NULL"),
       byKind,
     };

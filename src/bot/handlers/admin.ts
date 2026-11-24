@@ -7,7 +7,8 @@ import { BTN, FIND_BTN, isMenuText, menuFor, menuStampFor, MORE_BTN, SETTINGS_CL
 import { lastPoll } from "../views.js";
 import { addAiBonus, aiLimits, BONUS_GLOBAL_STEP, BONUS_USER_STEP, clearAiBonus, GLOBAL_STEPS, setAiLimit, stepValue, USER_STEPS } from "../../ai/limits.js";
 import { addDays, todayMsk } from "../../time.js";
-import type { Repo, User } from "../../db/repo.js";
+import type { Platform, Repo, User } from "../../db/repo.js";
+import { platformOf } from "../../max/store.js";
 import { CAL_LINK_COUNTER } from "./calendar.js";
 import type { PollResult } from "../../schedule/service.js";
 import { logger } from "../../logger.js";
@@ -74,8 +75,8 @@ function emptyNote(r: PollResult): string {
  * забирают сейчас (за 7 дней), и чем. Одна лента на двух устройствах
  * считается в каждом клиенте, поэтому сумма по клиентам бывает больше.
  */
-export function calendarFunnel(repo: Repo, linksWeek: number): string[] {
-  const s = repo.calFetchStats(new Date(Date.now() - 7 * 86_400_000).toISOString());
+export function calendarFunnel(repo: Repo, linksWeek: number, platform?: Platform): string[] {
+  const s = repo.calFetchStats(new Date(Date.now() - 7 * 86_400_000).toISOString(), platform);
   const clients = (c: Record<string, number>): string => FEED_CLIENTS.filter(([k]) => c[k]).map(([k, label]) => `${label} ${c[k]}`).join(" · ") || "никто";
   return [
     "<b>📆 Подписка на календарь</b>",
@@ -85,29 +86,53 @@ export function calendarFunnel(repo: Repo, linksWeek: number): string[] {
   ];
 }
 
-function statsText(ctx: BotContext): string {
+const PLATFORM_TITLE: Record<Platform, string> = { tg: "Telegram", max: "МАКС" };
+
+/** Переключатель «Telegram | МАКС» под статистикой; открытая — с точкой. */
+export function statsKeyboard(platform: Platform, by: Record<Platform, { total: number }>): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  for (const p of ["tg", "max"] as const) kb.text(`${p === platform ? "• " : ""}${PLATFORM_TITLE[p]} (${by[p].total})`, `adm:st:${p}`);
+  return kb;
+}
+
+/**
+ * /stats одной платформы. Один человек в Telegram и в МАКС — две записи в
+ * users, которые не связать, поэтому платформы не складываются: каждая —
+ * своя статистика, между ними — переключатель.
+ */
+export function statsText(ctx: BotContext, platform: Platform): string {
   const repo = ctx.deps.repo;
-  const c = repo.countUsers();
   const by = repo.countUsersByPlatform();
-  const pop = repo.groupPopulation();
-  // Один человек в Telegram и в МАКС — две записи, поэтому платформы не складываем.
+  const u = by[platform];
+  const other: Platform = platform === "tg" ? "max" : "tg";
+  const pop = repo.groupPopulation().filter((p) => p[platform] > 0).sort((a, b) => b[platform] - a[platform]);
   const lines = [
-    "<b>📊 Статистика</b>",
-    `Telegram: ${by.tg.total}, активных: ${by.tg.active}, с группой: ${by.tg.withGroup}`,
-    ...(by.max.total ? [`МАКС: ${by.max.total}, активных: ${by.max.active}, с группой: ${by.max.withGroup}`] : []),
-    `Собрали своё нижнее меню: ${c.customMenu}`,
+    `<b>📊 Статистика: ${PLATFORM_TITLE[platform]}</b>`,
+    `Пользователей: ${u.total}, активных: ${u.active}, с группой: ${u.withGroup}`,
+    `Собрали своё нижнее меню: ${u.customMenu}`,
+    `<i>${PLATFORM_TITLE[other]} — отдельно (${by[other].total}), кнопка ниже: кто зашёл с обеих, тот там тоже.</i>`,
     "",
-    ...pop.slice(0, 30).map((p) => `${esc(ctx.deps.service.group(p.groupKey)?.title ?? p.groupKey)} — ${p.tg}${p.max ? ` + МАКС ${p.max}` : ""}`),
+    ...(pop.length ? pop.slice(0, 30).map((p) => `${esc(ctx.deps.service.group(p.groupKey)?.title ?? p.groupKey)} — ${p[platform]}`) : ["Групп пока нет."]),
   ];
   // Что жмут: кнопки меню, кнопки под сообщениями и команды за неделю (без id людей).
-  const allClicks = repo.countersSince(addDays(todayMsk(), -6));
+  const since = addDays(todayMsk(), -6);
+  const allClicks = repo.countersSince(since, platform);
   // Настройки — своим блоком: в общем топ-20 редкие пункты не видны, а решать надо по всем.
   const settingsClicks = allClicks.filter((c) => c.key.startsWith("cb:s:"));
   const clicks = allClicks.filter((c) => !c.key.startsWith("cal:") && !c.key.startsWith("cb:s:"));
-  lines.push("", ...calendarFunnel(repo, allClicks.find((c) => c.key === CAL_LINK_COUNTER)?.n ?? 0));
+  lines.push("", ...calendarFunnel(repo, allClicks.find((c) => c.key === CAL_LINK_COUNTER)?.n ?? 0, platform));
   if (settingsClicks.length) lines.push("", "<b>⚙️ Настройки за 7 дней</b>", ...settingsClicks.map((c) => `${esc(SETTINGS_CLICK_LABELS[c.key.slice(5)] ?? c.key.slice(5))} — ${c.n}`));
   if (clicks.length) lines.push("", "<b>Нажатия за 7 дней</b>", ...clicks.slice(0, 20).map((c) => `${esc((panelClick(c.key) ?? c.key).replace(/^btn:/, "").replace(/^cb:/, "под сообщением: ").replace(/^cmd:/, "").replace(/^text:found$/, "текст → нашёл").replace(/^text:miss$/, "текст → не нашёл"))} — ${c.n}`));
+  // Нажатия до разделения — без платформы: в счётчиках нет id людей. Через неделю после выкладки пропадут из окна.
+  const unsplit = repo.unsplitCountersSince(since);
+  if (unsplit) lines.push(`<i>Ещё ${unsplit} ${plural(unsplit, "нажатие", "нажатия", "нажатий")} за эти дни записаны до разделения — чьи они, Telegram или МАКС, не узнать; в цифрах выше их нет.</i>`);
   return lines.join("\n");
+}
+
+/** Открыть /stats: по умолчанию — платформа, из которой смотрит админ. */
+async function replyStats(ctx: BotContext): Promise<void> {
+  const platform = platformOf(ctx.chat?.id);
+  await ctx.reply(statsText(ctx, platform), { parse_mode: "HTML", reply_markup: statsKeyboard(platform, ctx.deps.repo.countUsersByPlatform()) });
 }
 
 function teacherState(ctx: BotContext, count: number, error: string | null): string {
@@ -451,12 +476,20 @@ adminOnly.callbackQuery(/^chg:(release|drop)$/, async (ctx) => {
   await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard().text(`🗑 Не разослано (${by})`, "noop") }).catch(() => undefined);
 });
 
+adminOnly.callbackQuery(/^adm:st:(tg|max)$/, async (ctx) => {
+  const platform = ctx.match[1] as Platform;
+  await ctx.answerCallbackQuery();
+  await ctx
+    .editMessageText(statsText(ctx, platform), { parse_mode: "HTML", reply_markup: statsKeyboard(platform, ctx.deps.repo.countUsersByPlatform()) })
+    .catch(() => undefined);
+});
+
 adminOnly.callbackQuery(/^adm:(\w+)$/, async (ctx, next) => {
   const action = ctx.match[1];
   switch (action) {
     case "stats":
       await ctx.answerCallbackQuery();
-      await ctx.reply(statsText(ctx), { parse_mode: "HTML" });
+      await replyStats(ctx);
       return;
     case "health":
       await ctx.answerCallbackQuery();
@@ -510,7 +543,7 @@ adminOnly.command("slides", async (ctx) => {
   await ctx.reply(`📎 <b>Слайды вебинаров</b>\n\n${lines.join("\n")}`, { parse_mode: "HTML" });
 });
 
-adminOnly.command("stats", (ctx) => ctx.reply(statsText(ctx), { parse_mode: "HTML" }));
+adminOnly.command("stats", replyStats);
 adminOnly.command("health", (ctx) => ctx.reply(healthText(ctx), { parse_mode: "HTML" }));
 adminOnly.command("poll", async (ctx) => {
   await ctx.reply("Опрашиваю портал…");

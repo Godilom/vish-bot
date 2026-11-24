@@ -140,7 +140,7 @@ interface MaxCall {
   body: Record<string, unknown> | null;
 }
 
-function setup(opts: { ask?: boolean; failEdits?: boolean } = {}) {
+function setup(opts: { ask?: boolean; failEdits?: boolean; env?: Record<string, string> } = {}) {
   const repo = new Repo(openDatabase(":memory:"));
   const calls: MaxCall[] = [];
   let mid = 0;
@@ -156,7 +156,7 @@ function setup(opts: { ask?: boolean; failEdits?: boolean } = {}) {
     if (url.host === "upload.max.example") return json({ photos: { p1: { token: "photo-token" } } });
     return json({ success: true });
   }) as never;
-  const config = loadConfig({ BOT_TOKEN: `123456:${"x".repeat(30)}`, ADMIN_IDS: "42" } as NodeJS.ProcessEnv);
+  const config = loadConfig({ BOT_TOKEN: `123456:${"x".repeat(30)}`, ADMIN_IDS: "42", ...opts.env } as NodeJS.ProcessEnv);
   const max = new MaxBridge({ token: "max-token", repo, botToken: config.BOT_TOKEN, newsChatIds: [], menuFor, fetch: fakeFetch });
   const deps: Deps = { config, repo, service: service(), renderer: null, ask: opts.ask ? ({} as Deps["ask"]) : null, teachers: null, webinars: null, students: null, known: null, news: null, http: null, inline: false, botUsername: "vish_bot", pending: new Map(), startedAt: new Date(), max };
   const bot = createBot(deps);
@@ -179,6 +179,42 @@ const textFromMax = (text: string): MaxUpdate =>
   ({ update_type: "message_created", timestamp: Date.now(), message: { sender: { user_id: 5, first_name: "Аня" }, recipient: { chat_id: 1, chat_type: "dialog", user_id: 900 }, timestamp: Date.now(), body: { mid: `in.${text}`, text } } }) as MaxUpdate;
 
 describe("МАКС: тот же бот", () => {
+  it("админ из МАКС (MAX_ADMIN_IDS) видит /stats: сначала МАКС, кнопкой — Telegram; чужому /stats не отвечает", async () => {
+    const { repo, calls, max, bot } = setup({ env: { MAX_ADMIN_IDS: "5" } });
+    repo.touchUser(100, null, null); // человек из Telegram
+    repo.updateUser(100, { groupKey: group.key });
+    const uid = max.uid(5);
+    repo.touchUser(uid, null, "Аня");
+    repo.updateUser(uid, { groupKey: group.key });
+    await max.handle(bot, textFromMax("/stats"));
+    const sent = calls.filter((c) => c.path === "/messages" && c.method === "POST");
+    expect(String(sent[0]?.body?.text)).toContain("Статистика: МАКС");
+    expect(String(sent[0]?.body?.text)).toContain("Пользователей: 1,");
+    expect(buttonsOf(sent[0])[0]!.map((b) => b.payload)).toEqual(["adm:st:tg", "adm:st:max"]);
+    calls.length = 0;
+    await max.handle(bot, {
+      update_type: "message_callback",
+      timestamp: Date.now(),
+      callback: { callback_id: "cb9", payload: "adm:st:tg", user: { user_id: 5, first_name: "Аня" }, timestamp: Date.now() },
+      message: { recipient: { chat_id: 1, chat_type: "dialog", user_id: 5 }, timestamp: Date.now(), body: { mid: "mid.1", text: "стата" } },
+    } as MaxUpdate);
+    const edit = calls.find((c) => c.path === "/messages" && c.method === "PUT");
+    expect(String(edit?.body?.text)).toContain("Статистика: Telegram");
+
+    // Тот же id МАКС не в MAX_ADMIN_IDS — не админ: команды админа молчат.
+    const other = setup();
+    other.repo.touchUser(other.max.uid(5), null, "Аня");
+    await other.max.handle(other.bot, textFromMax("/stats"));
+    expect(other.calls.some((c) => c.path === "/messages" && String(c.body?.text).includes("Статистика"))).toBe(false);
+  });
+
+  it("/myid в МАКС — id в МАКС, а не uid моста", async () => {
+    const { calls, max, bot } = setup();
+    await max.handle(bot, textFromMax("/myid"));
+    const sent = calls.find((c) => c.path === "/messages" && c.method === "POST");
+    expect(String(sent?.body?.text)).toContain("Твой id в МАКС: <code>5</code>");
+  });
+
   it("«📅 Сегодня» из МАКС — расписание дня с теми же кнопками, ответ уходит в МАКС", async () => {
     const { repo, calls, max, bot } = setup();
     const uid = max.uid(5);

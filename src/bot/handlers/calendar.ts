@@ -17,6 +17,7 @@ import { publicBase } from "../../http/publicUrl.js";
 import { mskStamp } from "../recNotify.js";
 import { PROVIDER_TITLE } from "../../calendar/push.js";
 import type { CalProvider } from "../../db/repo.js";
+import { platformOf } from "../../max/store.js";
 
 /** Счётчик «выдали ссылку-подписку» (ui_counters); в /stats — в разделе календаря, а не среди нажатий. */
 export const CAL_LINK_COUNTER = "cal:link";
@@ -264,7 +265,7 @@ async function sendSubscription(ctx: BotContext, alarm: number): Promise<void> {
   ctx.deps.repo.updateUser(ctx.user.id, { calAlarmMin: alarm > 0 ? alarm : null });
   const token = ctx.deps.repo.ensureCalToken(ctx.user.id);
   // Воронка в /stats: ссылку выдали (не нажатие, а дошедший до ссылки человек).
-  ctx.deps.repo.bumpCounter(todayMsk(), CAL_LINK_COUNTER);
+  ctx.deps.repo.bumpCounter(todayMsk(), CAL_LINK_COUNTER, platformOf(ctx.chat?.id));
   const base = publicBase(ctx.deps)!;
   const http = `${base}${calendarPath(token)}`;
   const webcal = http.replace(/^https?:\/\//, "webcal://");

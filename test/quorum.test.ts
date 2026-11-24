@@ -5,6 +5,7 @@ import { Repo } from "../src/db/repo.js";
 import { createHttpServer } from "../src/http/server.js";
 import { quorumSnapshot } from "../src/http/quorum.js";
 import { MAX_UID_BASE } from "../src/max/store.js";
+import { MIGRATIONS } from "../src/db/migrations.js";
 import type { ScheduleService } from "../src/schedule/service.js";
 import type { LogicalGroup } from "../src/schedule/groups.js";
 
@@ -53,8 +54,8 @@ describe("«Кворум»: студенты в боте по группам", (
   it("/stats: пользователи и группы по платформам", () => {
     const repo = seed();
     expect(repo.countUsersByPlatform()).toEqual({
-      tg: { total: 7, active: 6, withGroup: 5 },
-      max: { total: 3, active: 2, withGroup: 2 },
+      tg: { total: 7, active: 6, withGroup: 5, customMenu: 0 },
+      max: { total: 3, active: 2, withGroup: 2, customMenu: 0 },
     });
     const pop = new Map(repo.groupPopulation().map((p) => [p.groupKey, p]));
     // В /stats преподаватели не вычитаются — как и раньше.
@@ -103,3 +104,39 @@ describe("«Кворум»: студенты в боте по группам", (
     expect(await head.text()).toBe("");
   });
 });
+
+describe("Нажатия по платформам", () => {
+  it("счётчик пишет Telegram и МАКС отдельно; старые нажатия без платформы — отдельной цифрой", () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    repo.bumpCounter("2026-11-20", "btn:Сегодня");
+    repo.bumpCounter("2026-11-20", "btn:Сегодня", "max");
+    repo.bumpCounter("2026-11-21", "btn:Сегодня", "tg");
+    expect(repo.countersSince("2026-11-20", "tg")).toEqual([{ key: "btn:Сегодня", n: 2 }]);
+    expect(repo.countersSince("2026-11-20", "max")).toEqual([{ key: "btn:Сегодня", n: 1 }]);
+    expect(repo.countersSince("2026-11-20")).toEqual([{ key: "btn:Сегодня", n: 3 }]);
+    expect(repo.unsplitCountersSince("2026-11-20")).toBe(0);
+  });
+
+  it("миграция: дни до первого человека из МАКС — Telegram, после — не разобрать", () => {
+    const db = openDatabase(":memory:");
+    // Как до миграции: только n.
+    db.exec("UPDATE ui_counters SET n = n");
+    const repo = new Repo(db);
+    repo.maxUid(1, MAX_UID_BASE);
+    db.exec("UPDATE max_users SET created_at = '2026-10-21T10:00:00.000Z'");
+    db.exec("INSERT INTO ui_counters (day, key, n) VALUES ('2026-10-20', 'btn:A', 5), ('2026-10-22', 'btn:A', 4)");
+    db.exec(MIGRATIONS[MIGRATIONS.length - 1]!.replace(/ALTER TABLE[^;]+;/g, ""));
+    expect(repo.countersSince("2026-10-01", "tg")).toEqual([{ key: "btn:A", n: 5 }]);
+    expect(repo.countersSince("2026-10-01", "max")).toEqual([]);
+    expect(repo.unsplitCountersSince("2026-10-01")).toBe(4);
+  });
+
+  it("люди: по uid моста, даже если строки в max_users нет", () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    repo.touchUser(MAX_UID_BASE + 7, null, null);
+    repo.touchUser(123, null, null);
+    const by = repo.countUsersByPlatform();
+    expect([by.tg.total, by.max.total]).toEqual([1, 1]);
+  });
+});
+
