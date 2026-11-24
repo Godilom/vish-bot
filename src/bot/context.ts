@@ -30,6 +30,8 @@ export interface PendingState {
   board?: boolean;
   /** For broadcast: send without sound (disable_notification). Default — with sound. */
   silent?: boolean;
+  /** Рассылка — опрос: бот разошлёт его сам и посчитает голоса (bcPoll.ts). */
+  poll?: { question: string; options: string[]; multiple: boolean };
   /** «Министерство Жалоб»: отправить анонимно; ticket — на какое обращение отвечает админ. */
   anon?: boolean;
   ticket?: number;
