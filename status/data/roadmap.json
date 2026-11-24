@@ -2329,6 +2329,21 @@
    }
   },
   {
+   "id": "adr-151",
+   "adr": 151,
+   "date": "2026-11-24",
+   "group": "ai",
+   "kind": "feature",
+   "title": "Второй бот ВИШ AI",
+   "text": "Отдельный чат с ИИ в Telegram: короткие ответы, самая экономная модель, свой деплой.",
+   "status": "progress",
+   "review": {
+    "claude": "none",
+    "author": "none",
+    "senior": "none"
+   }
+  },
+  {
    "id": "g-forget",
    "date": "2026-09-15",
    "group": "base",
