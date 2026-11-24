@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-07",
+ "updated": "2026-11-24",
  "groups": [
   {
    "id": "base",
@@ -2310,6 +2310,21 @@
    "review": {
     "claude": "none",
     "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-150",
+   "adr": 150,
+   "date": "2026-11-24",
+   "group": "news",
+   "kind": "feature",
+   "title": "Опрос в рассылке",
+   "text": "Бот сам шлёт анонимный опрос и показывает админу итоги.",
+   "status": "progress",
+   "review": {
+    "claude": "none",
+    "author": "none",
     "senior": "none"
    }
   },
