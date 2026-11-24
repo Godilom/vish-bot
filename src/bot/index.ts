@@ -29,6 +29,7 @@ import { groupChatHandlers } from "./handlers/groupChat.js";
 import { chatAdminHandlers } from "./handlers/chatAdmin.js";
 import { recSlotsHandlers } from "./handlers/recSlots.js";
 import { easterHandlers } from "./easter.js";
+import { isMaxChat, platformOf } from "../max/store.js";
 
 /** Колбэки панелей, которые считаются по кнопкам, а не одной строкой на панель. */
 const PANEL_PREFIXES = new Set(["hub", "more"]);
@@ -78,7 +79,8 @@ export function createBot(deps: Deps): Bot<BotContext> {
     // там). Inline-запрос и реплика в группе — ещё не знакомство.
     const privateChat = ctx.chat?.type === "private";
     ctx.user = privateChat ? deps.repo.touchUser(from.id, from.username ?? null, from.first_name ?? null) : deps.repo.peekUser(from.id, from.username ?? null, from.first_name ?? null);
-    ctx.isAdmin = deps.config.ADMIN_IDS.includes(from.id);
+    // Человек из МАКС — по его id в МАКС (MAX_ADMIN_IDS): uid моста в ADMIN_IDS не впишешь заранее.
+    ctx.isAdmin = isMaxChat(from.id) ? (deps.config.MAX_ADMIN_IDS?.includes(deps.repo.maxIdOf(from.id) ?? -1) ?? false) : deps.config.ADMIN_IDS.includes(from.id);
     await next();
   });
 
@@ -124,7 +126,7 @@ export function createBot(deps: Deps): Bot<BotContext> {
           : isMenuText(ctx.msg?.text)
             ? `btn:${currentLabel(ctx.msg!.text!.trim())}`
             : null;
-      if (key && ctx.chat?.type === "private") deps.repo.bumpCounter(todayMsk(), key);
+      if (key && ctx.chat?.type === "private") deps.repo.bumpCounter(todayMsk(), key, platformOf(ctx.chat.id));
     } catch (err) {
       logger.debug({ err: String(err) }, "counter not saved");
     }

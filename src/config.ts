@@ -88,6 +88,11 @@ const schema = z.object({
    * Задан — тот же бот работает и в МАКС (src/max/); пусто — только Telegram.
    */
   MAX_BOT_TOKEN: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
+  /**
+   * Админы бота в МАКС — их id в МАКС (не Telegram): там им открыты /admin,
+   * /stats и остальные команды админа. Свой id в МАКС бот пишет по /myid.
+   */
+  MAX_ADMIN_IDS: idList,
   /** VK service token (app "service key") for wall.get on VK sources. */
   VK_SERVICE_TOKEN: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
   NEWS_SCAN_CRON: z.string().default("30 10 * * *"),

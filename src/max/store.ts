@@ -14,6 +14,11 @@ import type { MaxAttachment } from "./api.js";
  */
 export const MAX_UID_BASE = 2 ** 52;
 
+/** Откуда человек или чат: МАКС (uid моста) или Telegram. */
+export function platformOf(chatId: unknown): "tg" | "max" {
+  return isMaxChat(chatId) ? "max" : "tg";
+}
+
 /** Это чат человека из МАКС (uid моста), а не Telegram. */
 export function isMaxChat(chatId: unknown): chatId is number {
   return typeof chatId === "number" && chatId > MAX_UID_BASE;

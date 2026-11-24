@@ -20,7 +20,7 @@ import { findGroup } from "../../schedule/groups.js";
 import { lessonTypeLabel, type Occurrence } from "../../schedule/model.js";
 import { addDays, fmtDDMM, fmtHHMM, parseRuDate, todayMsk, weekdayName, type LocalDate } from "../../time.js";
 import { logger } from "../../logger.js";
-import { isMaxChat } from "../../max/store.js";
+import { isMaxChat, platformOf } from "../../max/store.js";
 
 export const miscHandlers = new Composer<BotContext>();
 
@@ -154,6 +154,13 @@ export async function showFeatures(ctx: BotContext): Promise<void> {
   }
 }
 miscHandlers.command("help", showFeatures);
+
+// Свой id — чтобы вписать себя в ADMIN_IDS (Telegram) или MAX_ADMIN_IDS (МАКС). Команда скрытая, в меню её нет.
+miscHandlers.command("myid", async (ctx) => {
+  if (ctx.chat?.type !== "private" || !ctx.from) return;
+  const maxId = isMaxChat(ctx.from.id) ? ctx.deps.repo.maxIdOf(ctx.from.id) : null;
+  await ctx.reply(maxId != null ? `Твой id в МАКС: <code>${maxId}</code> (для MAX_ADMIN_IDS).` : `Твой id в Telegram: <code>${ctx.from.id}</code> (для ADMIN_IDS).`, { parse_mode: "HTML" });
+});
 miscHandlers.command("features", showFeatures);
 miscHandlers.hears([BTN.features, BTN.help], showFeatures);
 
@@ -482,7 +489,7 @@ export async function freeTextSearch(ctx: BotContext, text: string): Promise<voi
   // «пересдачи», «ппа», «долги» — сразу экран ППА своей группы, а не поиск по предметам.
   if (isPpaQuery(q) && needGroup(ctx)) return showPpa(ctx, false);
   const hits = await localSearch(ctx, q, { freeText: true });
-  ctx.deps.repo.bumpCounter(todayMsk(), hits.parts.length ? "text:found" : "text:miss");
+  ctx.deps.repo.bumpCounter(todayMsk(), hits.parts.length ? "text:found" : "text:miss", platformOf(ctx.chat?.id));
   const person = hits.onlyPeople ? clearHit(hits.people) : null;
   if (person) return void (await showPerson(ctx, person.ref, todayMsk(), { others: tiedWith(hits.people, person), self: person }));
   const kb = new InlineKeyboard(hits.kb.inline_keyboard.filter((row) => row.length).map((row) => [...row]));

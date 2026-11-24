@@ -614,4 +614,12 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (poll_id, voter)
   );
   `,
+  // Счётчики нажатий — отдельно Telegram и МАКС (n остаётся суммой). Дни до
+  // первого человека из МАКС — целиком Telegram; нажатия после него и до этой
+  // миграции не разобрать (id людей в счётчиках нет) — /stats пишет, сколько их.
+  `
+  ALTER TABLE ui_counters ADD COLUMN n_tg INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE ui_counters ADD COLUMN n_max INTEGER NOT NULL DEFAULT 0;
+  UPDATE ui_counters SET n_tg = n WHERE day < COALESCE((SELECT substr(MIN(created_at), 1, 10) FROM max_users), '9999-12-31');
+  `,
 ];
