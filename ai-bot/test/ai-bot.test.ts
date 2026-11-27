@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildRequest } from "../src/claude.js";
 import { loadConfig, parseDotEnv } from "../src/config.js";
 import { History, Usage, moscowDay } from "../src/memory.js";
-import { splitForTelegram } from "../src/text.js";
+import { replyText, splitForTelegram } from "../src/text.js";
 
 const env = { AI_BOT_TOKEN: "t", ANTHROPIC_API_KEY: "k" };
 
@@ -12,7 +12,7 @@ describe("config", () => {
     expect(c.model).toBe("claude-haiku-5-5");
     expect(c.effort).toBe("low");
     expect(c.thinkingOff).toBe(false);
-    expect(c.maxTokens).toBe(1024);
+    expect(c.maxTokens).toBe(10240);
     expect(c.historyTurns).toBe(3);
     expect(c.dailyLimit).toBe(30);
   });
@@ -79,5 +79,14 @@ describe("splitForTelegram", () => {
     const parts = splitForTelegram(text, 300);
     expect(parts.every((p) => p.length <= 300)).toBe(true);
     expect(parts.join("\n")).toBe(text);
+  });
+});
+
+describe("replyText", () => {
+  it("пустой ответ с обрывом — честно про длину, а не «переформулируй»", () => {
+    expect(replyText({ text: "", cut: true })).toMatch(/слишком большая/);
+    expect(replyText({ text: "", cut: false })).toMatch(/переформулировать/);
+    expect(replyText({ text: "код", cut: true })).toMatch(/^код…\n\n\(ответ упёрся/);
+    expect(replyText({ text: "ок", cut: false })).toBe("ок");
   });
 });

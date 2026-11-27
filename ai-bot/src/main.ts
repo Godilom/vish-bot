@@ -8,7 +8,7 @@ import { Claude, costUsd } from "./claude.js";
 import { loadConfig, loadDotEnv } from "./config.js";
 import { classify, decodeText, downloadTelegramFile, imageBlock, pdfBlock, pdfPages, pickPhoto, textBlock, type FileBlock } from "./files.js";
 import { History, Usage } from "./memory.js";
-import { splitForTelegram } from "./text.js";
+import { replyText, splitForTelegram } from "./text.js";
 
 function log(event: string, data: Record<string, number | string | boolean> = {}): void {
   console.log(JSON.stringify({ t: new Date().toISOString(), event, ...data }));
@@ -98,7 +98,7 @@ async function main(): Promise<void> {
       const r = await claude.reply(history.get(chatId), question, blocks);
       usage.record(userId, r.inputTokens, r.outputTokens, Boolean(file));
       log("reply", { user: userId, file: file ? file.label.split(":")[0] ?? "file" : "none", in: r.inputTokens, out: r.outputTokens, ms: Date.now() - started, cut: r.cut, refused: r.refused });
-      const text = (r.text || "Не получилось ответить, попробуй переформулировать.") + (r.cut ? "…" : "");
+      const text = replyText(r);
       // Сам файл в историю не кладём — только пометку: иначе каждый следующий вопрос оплачивал бы его снова.
       if (!r.refused && r.text) history.add(chatId, { user: file ? `[${file.label}] ${question}` : question, assistant: r.text });
       for (const part of splitForTelegram(text)) await ctx.reply(part);
