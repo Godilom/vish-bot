@@ -102,7 +102,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     model: env.AI_MODEL?.trim() || "claude-haiku-5-5",
     effort,
     thinkingOff: ["off", "0", "false", "no"].includes((env.AI_THINKING ?? "").trim().toLowerCase()),
-    maxTokens: int(env, "AI_MAX_TOKENS", 4096, 128, 16000),
+    maxTokens: int(env, "AI_MAX_TOKENS", 10240, 128, 16000),
     historyTurns: int(env, "AI_HISTORY_TURNS", 3, 0, 20),
     historyTtlMin: int(env, "AI_HISTORY_TTL_MIN", 30, 1, 24 * 60),
     maxInputChars: int(env, "AI_MAX_INPUT_CHARS", 2000, 100, 20000),

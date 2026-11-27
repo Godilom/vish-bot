@@ -12,7 +12,7 @@ describe("config", () => {
     expect(c.model).toBe("claude-haiku-5-5");
     expect(c.effort).toBe("low");
     expect(c.thinkingOff).toBe(false);
-    expect(c.maxTokens).toBe(4096);
+    expect(c.maxTokens).toBe(10240);
     expect(c.historyTurns).toBe(3);
     expect(c.dailyLimit).toBe(30);
   });
