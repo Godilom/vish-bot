@@ -66,11 +66,13 @@ export interface DayUsage {
 export class Usage {
   private day = "";
   private readonly perUser = new Map<number, number>();
+  private readonly perUserFiles = new Map<number, number>();
   private total: DayUsage = { requests: 0, inputTokens: 0, outputTokens: 0 };
 
   constructor(
     private readonly dailyLimit: number,
     private readonly now: () => number = Date.now,
+    private readonly dailyFileLimit = 0,
   ) {}
 
   private roll(): void {
@@ -78,6 +80,7 @@ export class Usage {
     if (d !== this.day) {
       this.day = d;
       this.perUser.clear();
+      this.perUserFiles.clear();
       this.total = { requests: 0, inputTokens: 0, outputTokens: 0 };
     }
   }
@@ -89,9 +92,17 @@ export class Usage {
     return Math.max(0, this.dailyLimit - (this.perUser.get(userId) ?? 0));
   }
 
-  record(userId: number, inputTokens: number, outputTokens: number): void {
+  /** Сколько файлов человеку осталось сегодня (Infinity — без лимита). */
+  filesLeft(userId: number, unlimited = false): number {
+    this.roll();
+    if (unlimited) return Infinity;
+    return Math.max(0, this.dailyFileLimit - (this.perUserFiles.get(userId) ?? 0));
+  }
+
+  record(userId: number, inputTokens: number, outputTokens: number, file = false): void {
     this.roll();
     this.perUser.set(userId, (this.perUser.get(userId) ?? 0) + 1);
+    if (file) this.perUserFiles.set(userId, (this.perUserFiles.get(userId) ?? 0) + 1);
     this.total.requests += 1;
     this.total.inputTokens += inputTokens;
     this.total.outputTokens += outputTokens;

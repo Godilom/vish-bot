@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-24",
+ "updated": "2026-11-27",
  "groups": [
   {
    "id": "base",
@@ -2351,6 +2351,21 @@
    "kind": "feature",
    "title": "Статистика отдельно для Telegram и МАКС",
    "text": "В статистике и на странице Кворум люди из Telegram и из МАКС считаются отдельно и не складываются. Обе видны в админке и в Telegram, и в МАКС.",
+   "status": "progress",
+   "review": {
+    "claude": "none",
+    "author": "none",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-153",
+   "adr": 153,
+   "date": "2026-11-27",
+   "group": "ai",
+   "kind": "feature",
+   "title": "ВИШ AI читает файлы",
+   "text": "Фото, PDF до 10 страниц и текстовые файлы, вопрос пишется в подписи.",
    "status": "progress",
    "review": {
     "claude": "none",

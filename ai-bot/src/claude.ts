@@ -11,6 +11,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import type { Config } from "./config.js";
+import type { FileBlock } from "./files.js";
 import type { Turn } from "./memory.js";
 
 export const SYSTEM = [
@@ -33,23 +34,24 @@ export interface Reply {
   refused: boolean;
 }
 
-export function buildMessages(history: Turn[], question: string): Anthropic.MessageParam[] {
+export function buildMessages(history: Turn[], question: string, files: FileBlock[] = []): Anthropic.MessageParam[] {
   const out: Anthropic.MessageParam[] = [];
   for (const t of history) {
     out.push({ role: "user", content: t.user }, { role: "assistant", content: t.assistant });
   }
-  out.push({ role: "user", content: question });
+  // Файл — перед вопросом, как советует документация.
+  out.push({ role: "user", content: files.length ? [...files, { type: "text", text: question }] : question });
   return out;
 }
 
-export function buildRequest(cfg: Config, history: Turn[], question: string): Anthropic.MessageCreateParamsNonStreaming {
+export function buildRequest(cfg: Config, history: Turn[], question: string, files: FileBlock[] = []): Anthropic.MessageCreateParamsNonStreaming {
   return {
     model: cfg.model,
     max_tokens: cfg.maxTokens,
     system: SYSTEM,
     ...(cfg.thinkingOff ? { thinking: { type: "disabled" as const } } : {}),
     output_config: { effort: cfg.effort },
-    messages: buildMessages(history, question),
+    messages: buildMessages(history, question, files),
   };
 }
 
@@ -62,8 +64,8 @@ export class Claude {
     this.client = new Anthropic({ apiKey: cfg.anthropicKey, timeout: 60_000 });
   }
 
-  async reply(history: Turn[], question: string): Promise<Reply> {
-    const msg = await this.client.messages.create(buildRequest(this.cfg, history, question));
+  async reply(history: Turn[], question: string, files: FileBlock[] = []): Promise<Reply> {
+    const msg = await this.client.messages.create(buildRequest(this.cfg, history, question, files));
     const inputTokens = msg.usage.input_tokens + (msg.usage.cache_read_input_tokens ?? 0) + (msg.usage.cache_creation_input_tokens ?? 0);
     const outputTokens = msg.usage.output_tokens;
     if (msg.stop_reason === "refusal") return { text: REFUSAL_TEXT, inputTokens, outputTokens, cut: false, refused: true };
