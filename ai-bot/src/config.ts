@@ -28,6 +28,16 @@ export interface Config {
   maxInputChars: number;
   /** Сколько сообщений в сутки (по Москве) можно одному человеку. 0 — без лимита. */
   dailyLimit: number;
+  /** Сколько файлов в сутки можно одному человеку (входят и в общий лимит сообщений). 0 — файлы выключены. */
+  dailyFileLimit: number;
+  /** Самый большой файл, который бот скачает, в мегабайтах (Telegram отдаёт ботам до 20). */
+  maxFileMb: number;
+  /** Сколько страниц PDF можно прислать за раз. */
+  maxPdfPages: number;
+  /** Сколько символов текстового файла уходит в модель. */
+  maxFileChars: number;
+  /** Фото берётся в размере не больше стольких пикселей по длинной стороне. */
+  photoMaxPx: number;
   /** Если задано — бот отвечает только этим id Telegram. */
   allowedIds: Set<number>;
   /** Админам лимит не мешает, им доступна /usage. */
@@ -97,6 +107,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     historyTtlMin: int(env, "AI_HISTORY_TTL_MIN", 30, 1, 24 * 60),
     maxInputChars: int(env, "AI_MAX_INPUT_CHARS", 2000, 100, 20000),
     dailyLimit: int(env, "AI_DAILY_LIMIT", 30, 0, 10000),
+    dailyFileLimit: int(env, "AI_DAILY_FILE_LIMIT", 10, 0, 1000),
+    maxFileMb: int(env, "AI_MAX_FILE_MB", 10, 1, 20),
+    maxPdfPages: int(env, "AI_MAX_PDF_PAGES", 10, 1, 100),
+    maxFileChars: int(env, "AI_MAX_FILE_CHARS", 20000, 1000, 200000),
+    photoMaxPx: int(env, "AI_PHOTO_MAX_PX", 1280, 200, 2576),
     allowedIds: ids(env.AI_ALLOWED_IDS),
     adminIds: ids(env.AI_ADMIN_IDS),
   };
